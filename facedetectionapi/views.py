@@ -16,6 +16,32 @@ class UserSignup(APIView):
     
     
 
+class UserLogin(APIView):
+    def post(self, request):
+        username=request.data.get('username','').strip()
+        password=request.data.get('password','').strip()
+        
+        if not username or not password:
+            return Response ({"error": "username and password are required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        
+        
+        
+        print(f"Attempting to log in with username: {username}")  # Debugging line
+
+        
+        try:
+            user = User.objects.get(username__iexact=username.strip())
+        except User.DoesNotExist as e:
+            print(f"Error: {str(e)}")
+            return Response({"error": "Invalid username or password"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if the plain text password matches
+        if password == user.password:
+            return Response({"message": "Login successful"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "Invalid username or password"}, status=status.HTTP_400_BAD_REQUEST)
+
 
 
 import cv2
