@@ -3,15 +3,42 @@ from rest_framework.response import Response
 from rest_framework import status
 from .models import User
 from .serializers import UserSerializer
+import face_recognition
+import base64
+import numpy as np
+from PIL import Image
+from io import BytesIO
 
 
 class UserSignup(APIView):
     def post(self, request):
         serializer = UserSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        image_file = request.FILES.get("photo")
+        if not image_file:
+            return Response({"error": "Image file is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            image = Image.open(image_file)
+            image = image.convert("RGB") 
+            image_array = np.array(image)
+
+            face_encodings = face_recognition.face_encodings(image_array)
+            if not face_encodings:
+                return Response({"error": "No face detected in the image"}, status=status.HTTP_400_BAD_REQUEST)
+
+            face_encoding = face_encodings[0]
+
+            face_encoding_str = base64.b64encode(face_encoding).decode("utf-8")
+
+            serializer.save(face_encoding=face_encoding_str)
             return Response({"message": "User signed up successfully"}, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"error": f"Error processing the image: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     
     
 
@@ -41,13 +68,14 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 import cv2
+import face_recognition
+from .models import User
+import numpy as np 
 
 class FaceInputView(APIView):
     def post(self, request):
-        # Load Haar Cascade for face detection
         face_cap = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
-        # Open the camera
         video_cap = cv2.VideoCapture(0)
         if not video_cap.isOpened():
             return Response({"error": "Could not access the camera"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -59,12 +87,10 @@ class FaceInputView(APIView):
                 if not ret:
                     return Response({"error": "Failed to capture video frame"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-                # Convert the frame to grayscale
-                col = cv2.cvtColor(video_data, cv2.COLOR_BGR2GRAY)
+                rgb_frame = cv2.cvtColor(video_data, cv2.COLOR_BGR2RGB)
 
-                # Detect faces
                 faces = face_cap.detectMultiScale(
-                    col,
+                    cv2.cvtColor(video_data, cv2.COLOR_BGR2GRAY),
                     scaleFactor=1.1,
                     minNeighbors=5,
                     minSize=(30, 30),
@@ -86,9 +112,37 @@ class FaceInputView(APIView):
             cv2.destroyAllWindows()
 
         if face_details:
-            return Response({"message": "Face(s) detected", "faces": face_details}, status=status.HTTP_200_OK)
+            face_locations = [(face['x'], face['y'], face['x'] + face['width'], face['y'] + face['height']) for face in face_details]
+            camera_face_encoding = face_recognition.face_encodings(rgb_frame, face_locations)
+
+            if camera_face_encoding:  
+                camera_face_encoding = camera_face_encoding[0] 
+                          
+                user_profiles = User.objects.all()
+                for user_profile in user_profiles:
+                    stored_face_encoding = user_profile.face_encoding
+                    if stored_face_encoding is None:
+                        return Response({"error": f"User {user_profile.id} does not have a stored face encoding","camera_face_encoding":camera_face_encoding}, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    try:
+                        stored_face_encoding = np.fromstring(stored_face_encoding, sep=',')  
+                    except ValueError:
+                        return Response({"error": f"Stored face encoding for user {user_profile.id} is invalid"}, status=status.HTTP_400_BAD_REQUEST)
+
+                    if stored_face_encoding.size > 0: 
+                        matches = face_recognition.compare_faces([stored_face_encoding], camera_face_encoding)
+                        
+                        if True in matches: 
+                            return Response({"message": "Faces match", "result": True, "user_id": user_profile.id}, status=status.HTTP_200_OK)
+
+                return Response({"message": "Faces do not match with any stored user", "result": False}, status=status.HTTP_400_BAD_REQUEST)
+            
+            else:
+                return Response({"message": "No valid face encoding detected from camera"}, status=status.HTTP_404_NOT_FOUND)
+
         else:
-            return Response({"message": "No face detected"}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"message": "No face detected in the video frame"}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
@@ -125,13 +179,11 @@ class MarkAttendance(APIView):
                     camera_face_resized = cv2.resize(camera_face_crop, (100, 100))
 
                     diff = cv2.absdiff(user_face_resized, camera_face_resized)
-                    if np.mean(diff) < 50:  # Threshold for similarity
+                    if np.mean(diff) < 50:  
                         Attendance.objects.create(user=user)
                         return Response({"message": "Attendance marked"}, status=status.HTTP_200_OK)
 
         return Response({"message": "Your attendance is not recorded"}, status=status.HTTP_400_BAD_REQUEST)
-
-
 
 
 

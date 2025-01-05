@@ -6,6 +6,8 @@ class User(models.Model):
     email=models.EmailField(unique=True)
     photo=models.ImageField(upload_to='photos/')
     created_at=models.DateTimeField(auto_now_add=True)
+    face_encoding = models.TextField(blank=True, null=True)  # Use TextField to store large data like encodings
+
     
     def __str__(self):
         return self.username
