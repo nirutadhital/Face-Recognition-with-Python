@@ -63,19 +63,22 @@ class UserLogin(APIView):
 
 
 
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 import cv2
 import face_recognition
 from .models import User
-import numpy as np 
+import numpy as np
+import base64  # For decoding stored face encodings
+
 
 class FaceInputView(APIView):
     def post(self, request):
+        # Initialize face detection with Haar cascade
         face_cap = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
+        # Start video capture
         video_cap = cv2.VideoCapture(0)
         if not video_cap.isOpened():
             return Response({"error": "Could not access the camera"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -87,8 +90,10 @@ class FaceInputView(APIView):
                 if not ret:
                     return Response({"error": "Failed to capture video frame"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+                # Convert frame to RGB
                 rgb_frame = cv2.cvtColor(video_data, cv2.COLOR_BGR2RGB)
 
+                # Detect faces
                 faces = face_cap.detectMultiScale(
                     cv2.cvtColor(video_data, cv2.COLOR_BGR2GRAY),
                     scaleFactor=1.1,
@@ -100,10 +105,13 @@ class FaceInputView(APIView):
                 face_details = []
                 for (x, y, w, h) in faces:
                     face_details.append({"x": x, "y": y, "width": w, "height": h})
+                    # Draw a rectangle around detected faces
                     cv2.rectangle(video_data, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
+                # Display the video feed
                 cv2.imshow("Face Detection", video_data)
 
+                # Break loop when 'a' key is pressed
                 if cv2.waitKey(10) == ord("a"):
                     break
 
@@ -111,32 +119,46 @@ class FaceInputView(APIView):
             video_cap.release()
             cv2.destroyAllWindows()
 
+        # Process detected faces
         if face_details:
-            face_locations = [(face['x'], face['y'], face['x'] + face['width'], face['y'] + face['height']) for face in face_details]
+            face_locations = [(face['y'], face['x'] + face['width'], face['y'] + face['height'], face['x']) for face in face_details]
             camera_face_encoding = face_recognition.face_encodings(rgb_frame, face_locations)
 
             if camera_face_encoding:  
-                camera_face_encoding = camera_face_encoding[0] 
+                camera_face_encoding = camera_face_encoding[0]  # Use the first face encoding
                           
                 user_profiles = User.objects.all()
                 for user_profile in user_profiles:
                     stored_face_encoding = user_profile.face_encoding
-                    if stored_face_encoding is None:
-                        return Response({"error": f"User {user_profile.id} does not have a stored face encoding","camera_face_encoding":camera_face_encoding}, status=status.HTTP_400_BAD_REQUEST)
+
+                    if not stored_face_encoding:
+                        return Response({"error": f"User {user_profile.id} does not have a stored face encoding"}, status=status.HTTP_400_BAD_REQUEST)
                     
                     try:
-                        stored_face_encoding = np.fromstring(stored_face_encoding, sep=',')  
-                    except ValueError:
-                        return Response({"error": f"Stored face encoding for user {user_profile.id} is invalid"}, status=status.HTTP_400_BAD_REQUEST)
+                        # Decode the stored face encoding from Base64
+                        stored_face_encoding = np.frombuffer(base64.b64decode(stored_face_encoding), dtype=np.float64)
+                    except Exception as e:
+                        return Response({"error": f"Error decoding stored face encoding: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
-                    if stored_face_encoding.size > 0: 
-                        matches = face_recognition.compare_faces([stored_face_encoding], camera_face_encoding)
-                        
-                        if True in matches: 
-                            return Response({"message": "Faces match", "result": True, "user_id": user_profile.id}, status=status.HTTP_200_OK)
+                    #Euclidean distance between stored image and camera image
+                    face_distance = face_recognition.face_distance([stored_face_encoding], camera_face_encoding)[0]
 
-                return Response({"message": "Faces do not match with any stored user", "result": False}, status=status.HTTP_400_BAD_REQUEST)
-            
+                    # Define a threshold for a match
+                    threshold = 0.6
+
+                    if face_distance < threshold:
+                        return Response({
+                            "message": "Faces match",
+                            "result": True,
+                            "user_id": user_profile.id,
+                            "distance": face_distance
+                        }, status=status.HTTP_200_OK)
+
+                return Response({
+                    "message": "Faces do not match with any stored user",
+                    "result": False
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             else:
                 return Response({"message": "No valid face encoding detected from camera"}, status=status.HTTP_404_NOT_FOUND)
 
