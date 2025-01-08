@@ -70,15 +70,15 @@ import cv2
 import face_recognition
 from .models import User
 import numpy as np
-import base64  # For decoding stored face encodings
+import base64 
+from datetime import datetime
+from .models import Attendance
 
 
 class FaceInputView(APIView):
     def post(self, request):
-        # Initialize face detection with Haar cascade
         face_cap = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
-        # Start video capture
         video_cap = cv2.VideoCapture(0)
         if not video_cap.isOpened():
             return Response({"error": "Could not access the camera"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -143,16 +143,23 @@ class FaceInputView(APIView):
                     #Euclidean distance between stored image and camera image
                     face_distance = face_recognition.face_distance([stored_face_encoding], camera_face_encoding)[0]
 
-                    # Define a threshold for a match
                     threshold = 0.6
 
                     if face_distance < threshold:
-                        return Response({
-                            "message": "Faces match",
-                            "result": True,
-                            "user_id": user_profile.id,
-                            "distance": face_distance
-                        }, status=status.HTTP_200_OK)
+                        try:
+                            Attendance.objects.create(
+                                user=user_profile,
+                                date=datetime.now().date(),
+                                time=datetime.now().time()
+                            )
+                            return Response({
+                                "message": "Faces match",
+                                "result": True,
+                                "user_id": user_profile.id,
+                                "distance": face_distance
+                            }, status=status.HTTP_200_OK)
+                        except Exception as e:
+                            return Response({"error": f"Failed to record attendance: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
                 return Response({
                     "message": "Faces do not match with any stored user",
