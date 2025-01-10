@@ -169,12 +169,14 @@ class FaceInputView(APIView):
 from django.db.models import Q
 from .models import Attendance
 from .serializers import AttendanceSerializer
+from .pagination import CustomPagination
 
 class AttendanceReportView(APIView):
     def get(self, request):
         user_id = request.query_params.get('userID')
         date_from = request.query_params.get('from')
         date_to = request.query_params.get('to')
+        page_size = request.query_params.get('page_size')
 
     # WHERE user_id = userID AND date >= from AND date <= to
         filters = Q()
@@ -186,9 +188,15 @@ class AttendanceReportView(APIView):
             filters &= Q(date__lte=date_to)
 
         attendance_records = Attendance.objects.filter(filters).select_related('user')
+        
+        paginator = CustomPagination()
+        paginated_records = paginator.paginate_queryset(attendance_records, request)
+        
+        serializer = AttendanceSerializer(paginated_records, many=True)
+        
+        return paginator.get_paginated_response(serializer.data)
+    
 
-        serializer = AttendanceSerializer(attendance_records, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 
