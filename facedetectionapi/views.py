@@ -165,11 +165,63 @@ class FaceInputView(APIView):
 
 
 
-
-from django.db.models import Q
-from .models import Attendance
+# from django.db.models import Q
+# from .models import Attendance
 from .serializers import AttendanceSerializer
 from .pagination import CustomPagination
+
+import csv
+from django.http import HttpResponse
+from django.db.models import Q
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
+class AttendanceReportView(APIView):
+    def get(self, request):
+        download = request.query_params.get('download', None) == 'true'
+        user_id = request.query_params.get('userID')
+        date_from = request.query_params.get('from')
+        date_to = request.query_params.get('to')
+
+        filters = Q()
+        if user_id:
+            filters &= Q(user_id=user_id)
+        if date_from:
+            filters &= Q(date__gte=date_from)
+        if date_to:
+            filters &= Q(date__lte=date_to)
+
+        # Filter attendance records
+        attendance_records = Attendance.objects.filter(filters).select_related('user')
+
+        # Check if download parameter is present
+        if download:
+            return self.generate_csv(attendance_records)
+
+        # Default response for paginated data
+        paginator = CustomPagination()
+        paginated_records = paginator.paginate_queryset(attendance_records, request)
+        serializer = AttendanceSerializer(paginated_records, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+    def generate_csv(self, attendance_records):
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="attendance_report.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow(['User ID', 'User Name', 'Date', 'Time'])
+
+        for record in attendance_records:
+            writer.writerow([
+                record.user.id,
+                record.user.username,
+                record.date,
+                record.time
+            ])
+
+        return response
+
 
 class AttendanceReportView(APIView):
     def get(self, request):
@@ -195,6 +247,76 @@ class AttendanceReportView(APIView):
         serializer = AttendanceSerializer(paginated_records, many=True)
         
         return paginator.get_paginated_response(serializer.data)
+    
+     
+    
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from django.http import HttpResponse
+from django.db.models import Q
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from .serializers import AttendanceSerializer
+from .models import Attendance
+from .pagination import CustomPagination
+
+class AttendancePDFReportView(APIView):
+    def get(self, request):
+        user_id = request.query_params.get('userID')
+        date_from = request.query_params.get('from')
+        date_to = request.query_params.get('to')
+        page_size = request.query_params.get('page_size', 10)  
+
+        filters = Q()
+        if user_id:
+            filters &= Q(user_id=user_id)
+        if date_from:
+            filters &= Q(date__gte=date_from)
+        if date_to:
+            filters &= Q(date__lte=date_to)
+
+        attendance_records = Attendance.objects.filter(filters).select_related('user')
+
+        paginator = CustomPagination()
+        paginated_records = paginator.paginate_queryset(attendance_records, request)
+
+        return self.generate_pdf(paginated_records)
+
+    def generate_pdf(self, attendance_records):
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = 'attachment; filename="attendance_report.pdf"'
+
+        p = canvas.Canvas(response, pagesize=letter)
+        width, height = letter
+
+        p.setFont("Helvetica-Bold", 16)
+        p.drawString(100, height - 50, "Attendance Report")
+
+        p.setFont("Helvetica-Bold", 12)
+        y = height - 100
+        p.drawString(50, y, "User ID")
+        p.drawString(150, y, "User Name")
+        p.drawString(300, y, "Date")
+        p.drawString(450, y, "Time")
+
+        p.setFont("Helvetica", 10)
+        for record in attendance_records:
+            y -= 20
+            if y < 50:  
+                p.showPage()
+                p.setFont("Helvetica", 10)
+                y = height - 50
+
+            p.drawString(50, y, str(record.user.id))
+            p.drawString(150, y, record.user.username)
+            p.drawString(300, y, record.date.strftime("%Y-%m-%d"))
+            p.drawString(450, y, record.time.strftime("%H:%M:%S"))
+
+        p.save()
+        return response
+
+
     
 
 
