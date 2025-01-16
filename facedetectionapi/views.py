@@ -335,6 +335,31 @@ class UserDetails(APIView):
             serializer=UserSerializer(users,many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
         
+
+class UserUpdate(APIView):
+    def put(self, request):
+        user_id = request.query_params.get('userID')
+        if not user_id:
+            return Response(
+                {"error":"userID is required"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        try:
+            user=User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {"error":"User not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer=UserSerializer(user, data=request.data,partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        
+        
         
     
             
